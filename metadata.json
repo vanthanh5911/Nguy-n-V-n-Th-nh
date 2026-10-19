@@ -1,0 +1,6 @@
+{
+  "name": "QUẢN LÝ LƯU TRỮ - Hệ Thống Quản Lý Hồ Sơ & Chứng Từ",
+  "description": "Hệ thống quản lý kho hồ sơ, chứng từ lưu trữ trong mạng LAN tích hợp Mobile Offline Companion, quản lý phiếu nghiệp vụ, quét mã vạch và đồng bộ chống xung đột.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

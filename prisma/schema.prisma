@@ -1,0 +1,329 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  WAREHOUSE_MANAGER
+  WAREHOUSE_STAFF
+  APPROVER
+  VIEWER
+}
+
+enum BoxStatus {
+  IN_STOCK
+  BORROWED
+  TRANSITING
+  PENDING_DESTROY
+  DESTROYED
+  NEEDS_REVIEW
+}
+
+enum TicketType {
+  IMPORT
+  EXPORT
+  TRANSFER
+  BORROW
+  RETURN
+  DESTROY_EXPORT
+}
+
+enum TicketStatus {
+  DRAFT
+  CONFIRMED
+  VOID
+}
+
+enum BorrowStatus {
+  BORROWED
+  RETURNED
+  OVERDUE
+}
+
+enum DestructionBatchStatus {
+  DRAFT
+  PENDING_APPROVE
+  APPROVED
+  EXECUTED
+  REJECTED
+}
+
+enum AuditSource {
+  WEB
+  MOBILE_SYNC
+  IMPORT
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum BackupStatus {
+  SUCCESS
+  FAILED
+  IN_PROGRESS
+}
+
+model Unit {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  name        String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  warehouses Warehouse[]
+  boxes      Box[]
+
+  @@map("units")
+}
+
+model Warehouse {
+  id          String   @id @default(uuid())
+  unitId      String   @map("unit_id")
+  code        String
+  name        String
+  location    String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  unit  Unit   @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  boxes Box[]
+
+  @@unique([unitId, code])
+  @@map("warehouses")
+}
+
+model RetentionPolicy {
+  id            String   @id @default(uuid())
+  name          String
+  durationYears Int?     @map("duration_years")
+  isPermanent   Boolean  @default(false) @map("is_permanent")
+  legalBasis    String?  @map("legal_basis")
+  description   String?
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  documentTypes DocumentType[]
+
+  @@map("retention_policies")
+}
+
+model DocumentType {
+  id                String   @id @default(uuid())
+  code              String   @unique
+  name              String
+  retentionPolicyId String?  @map("retention_policy_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  retentionPolicy RetentionPolicy? @relation(fields: [retentionPolicyId], references: [id], onDelete: SetNull)
+  boxes           Box[]
+
+  @@map("document_types")
+}
+
+model User {
+  id              String   @id @default(uuid())
+  username        String   @unique
+  passwordHash    String   @map("password_hash")
+  fullName        String   @map("full_name")
+  role            Role     @default(WAREHOUSE_STAFF)
+  scopeUnits      String[] @default([]) @map("scope_units")
+  scopeWarehouses String[] @default([]) @map("scope_warehouses")
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  createdTickets    InventoryTicket[]  @relation("TicketCreatedBy")
+  confirmedTickets  InventoryTicket[]  @relation("TicketConfirmedBy")
+  createdBatches    DestructionBatch[] @relation("BatchCreatedBy")
+  approvedBatches   DestructionBatch[] @relation("BatchApprovedBy")
+  auditLogs         AuditLog[]
+  mobileDevices     MobileDevice[]
+
+  @@map("users")
+}
+
+model Box {
+  id            String    @id @default(uuid())
+  boxCode       String    @unique @map("box_code")
+  unitId        String    @map("unit_id")
+  warehouseId   String    @map("warehouse_id")
+  docTypeId     String    @map("doc_type_id")
+  year          Int
+  locationShelf String?   @map("location_shelf")
+  status        BoxStatus @default(IN_STOCK)
+  version       Int       @default(1)
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  unit          Unit         @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  warehouse     Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  docType       DocumentType @relation(fields: [docTypeId], references: [id], onDelete: Restrict)
+
+  documents        Document[]
+  ticketDetails    TicketDetail[]
+  borrowRecords    BorrowRecord[]
+  destructionItems DestructionItem[]
+
+  @@index([unitId, warehouseId, status])
+  @@index([boxCode])
+  @@map("boxes")
+}
+
+model Document {
+  id           String    @id @default(uuid())
+  boxId        String    @map("box_id")
+  docCode      String?   @map("doc_code")
+  title        String
+  documentDate DateTime? @map("document_date")
+  note         String?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  box           Box            @relation(fields: [boxId], references: [id], onDelete: Cascade)
+  borrowRecords BorrowRecord[]
+
+  @@index([boxId])
+  @@map("documents")
+}
+
+model InventoryTicket {
+  id          String       @id @default(uuid())
+  ticketCode  String       @unique @map("ticket_code")
+  type        TicketType
+  status      TicketStatus @default(DRAFT)
+  note        String?
+  createdBy   String       @map("created_by")
+  confirmedBy String?      @map("confirmed_by")
+  confirmedAt DateTime?    @map("confirmed_at")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  creator   User  @relation("TicketCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  confirmer User? @relation("TicketConfirmedBy", fields: [confirmedBy], references: [id], onDelete: SetNull)
+
+  details TicketDetail[]
+
+  @@map("inventory_tickets")
+}
+
+model TicketDetail {
+  id        String  @id @default(uuid())
+  ticketId  String  @map("ticket_id")
+  boxId     String  @map("box_id")
+  fromShelf String? @map("from_shelf")
+  toShelf   String? @map("to_shelf")
+  note      String?
+
+  ticket InventoryTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  box    Box             @relation(fields: [boxId], references: [id], onDelete: Restrict)
+
+  @@map("ticket_details")
+}
+
+model BorrowRecord {
+  id                 String       @id @default(uuid())
+  boxId              String       @map("box_id")
+  documentId         String?      @map("document_id")
+  borrowerName       String       @map("borrower_name")
+  borrowerDepartment String       @map("borrower_department")
+  borrowDate         DateTime     @map("borrow_date")
+  expectedReturnDate DateTime     @map("expected_return_date")
+  actualReturnDate   DateTime?    @map("actual_return_date")
+  returnCondition    String?      @map("return_condition")
+  status             BorrowStatus @default(BORROWED)
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  box      Box       @relation(fields: [boxId], references: [id], onDelete: Restrict)
+  document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+
+  @@index([status, expectedReturnDate])
+  @@map("borrow_records")
+}
+
+model DestructionBatch {
+  id          String                 @id @default(uuid())
+  batchCode   String                 @unique @map("batch_code")
+  status      DestructionBatchStatus @default(DRAFT)
+  createdBy   String                 @map("created_by")
+  approvedBy  String?                @map("approved_by")
+  approvedAt  DateTime?              @map("approved_at")
+  executedAt  DateTime?              @map("executed_at")
+  note        String?
+  createdAt   DateTime               @default(now()) @map("created_at")
+  updatedAt   DateTime               @updatedAt @map("updated_at")
+
+  creator  User  @relation("BatchCreatedBy", fields: [createdBy], references: [id], onDelete: Restrict)
+  approver User? @relation("BatchApprovedBy", fields: [approvedBy], references: [id], onDelete: SetNull)
+
+  items DestructionItem[]
+
+  @@map("destruction_batches")
+}
+
+model DestructionItem {
+  id      String  @id @default(uuid())
+  batchId String  @map("batch_id")
+  boxId   String  @map("box_id")
+  reason  String?
+
+  batch DestructionBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  box   Box              @relation(fields: [boxId], references: [id], onDelete: Restrict)
+
+  @@unique([batchId, boxId])
+  @@map("destruction_items")
+}
+
+model AuditLog {
+  id          String      @id @default(uuid())
+  userId      String?     @map("user_id")
+  action      String
+  targetTable String      @map("target_table")
+  targetId    String?     @map("target_id")
+  beforeData  Json?       @map("before_data")
+  afterData   Json?       @map("after_data")
+  source      AuditSource @default(WEB)
+  ipAddress   String?     @map("ip_address")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([targetTable, targetId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model MobileDevice {
+  id         String       @id @default(uuid())
+  deviceCode String       @unique @map("device_code")
+  userId     String       @map("user_id")
+  deviceName String?      @map("device_name")
+  status     DeviceStatus @default(ACTIVE)
+  lastSyncAt DateTime?    @map("last_sync_at")
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("mobile_devices")
+}
+
+model BackupLog {
+  id        String       @id @default(uuid())
+  filename  String
+  fileSize  BigInt       @map("file_size")
+  checksum  String
+  status    BackupStatus @default(IN_PROGRESS)
+  logDetail String?      @map("log_detail")
+  createdAt DateTime     @default(now()) @map("created_at")
+
+  @@map("backup_logs")
+}
